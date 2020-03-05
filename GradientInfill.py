@@ -239,36 +239,13 @@ def mfill_mode(Mode):
     Returns:
         Int: the Type of infill pattern
     """
-    iMode=0
-    if Mode == 'grid':
-        iMode=2
-    if Mode == 'lines':
-        iMode=2
-    if Mode == 'triangles':
-        iMode=2
-    if Mode == 'trihexagon':
-        iMode=2
-    if Mode == 'cubic':
-        iMode=2
-    if Mode == 'cubicsubdiv':
-        iMode=0
-    if Mode == 'tetrahedral':
-        iMode=2
-    if Mode == 'quarter_cubic':
-        iMode=2
-    if Mode == 'concentric':
-        iMode=0
-    if Mode == 'zigzag':
-        iMode=0
-    if Mode == 'cross':
-        iMode=1
-    if Mode == 'cross_3d':
-        iMode=1
-    if Mode == 'gyroid':
-        iMode=1
+    if Mode in ['grid', 'lines', 'triangles', 'trihexagon', 'cubic', 'tetrahedral', 'quarter_cubic']:
+        return 2
+    if Mode in ['cross', 'cross_3d', 'gyroid']:
+        return 1
+    if Mode in ['cubicsubdiv', 'concentric', 'zigzag']:
+        return 0
 
-    return iMode
-        
 class GradientInfill(Script):
     def getSettingDataString(self):
         return """{

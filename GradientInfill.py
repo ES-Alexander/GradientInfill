@@ -44,8 +44,9 @@ Segment = namedtuple('Segment', 'point1 point2')
 class Infill(Enum):
     """Enum for infill type."""
 
+    NOT_SUPPORTED  = 0  # currently unsupported infill mode
     SMALL_SEGMENTS = 1  # infill with small segments like gyroid
-    LINEAR = 2  # linear infill like rectilinear or triangles
+    LINEAR         = 2  # linear infill like rectilinear or triangles
 
 class Section(Enum):
     """Enum for section type."""
@@ -240,11 +241,11 @@ def mfill_mode(Mode):
         Int: the Type of infill pattern
     """
     if Mode in ['grid', 'lines', 'triangles', 'trihexagon', 'cubic', 'tetrahedral', 'quarter_cubic']:
-        return 2
+        return Infill.LINEAR
     if Mode in ['cross', 'cross_3d', 'gyroid']:
-        return 1
+        return Infill.SMALL_SEGMENTS
     if Mode in ['cubicsubdiv', 'concentric', 'zigzag']:
-        return 0
+        return Infill.NOT_SUPPORTED
 
 class GradientInfill(Script):
     def getSettingDataString(self):
@@ -370,10 +371,8 @@ class GradientInfill(Script):
         min_over_speed_factor = min_over_speed_factor /100
 
         test_outer_wall= bool(self.getSettingValueByKey("testouterwall"))
-        
 
-        
-        
+
         #   machine_extruder_count
         extruder_count=Application.getInstance().getGlobalContainerStack().getProperty("machine_extruder_count", "value")
         extruder_count = extruder_count-1
@@ -383,10 +382,10 @@ class GradientInfill(Script):
         # Deprecation function
         # extrud = list(Application.getInstance().getGlobalContainerStack().extruders.values())
         extrud = Application.getInstance().getGlobalContainerStack().extruderList
- 
+
         infillpattern = extrud[extruder_id].getProperty("infill_pattern", "value")
         connectinfill = extrud[extruder_id].getProperty("zig_zaggify_infill", "value")
-        
+
         relativeextrusion = extrud[extruder_id].getProperty("relative_extrusion", "value")
         link = extrud[extruder_id].getProperty("relative_extrusion", "value")
         if relativeextrusion == False:
@@ -402,14 +401,14 @@ class GradientInfill(Script):
             Logger.log('d', 'Gcode must be generate with the mode infill_before_walls to off')
             Message('It is important to make sure that the Walls are printed before the Infill (Infill before Walls must be set to  OFF)', title = catalog.i18nc("@info:title", "Post Processing")).show()
             return None
-        
+
         """Parse Gcode and modify infill portions with an extrusion width gradient."""
         currentSection = Section.NOTHING
         lastPosition = Point2D(-10000, -10000)
         gradientDiscretizationLength = gradient_thickness / gradient_discretization
 
-        infill_type=mfill_mode(infillpattern)
-        if infill_type == 0:
+        infill_type = mfill_mode(infillpattern)
+        if infill_type == Infill.NOT_SUPPORTED:
             #
             Logger.log('d', 'Infill Pattern not supported : ' + infillpattern)
             Message('Infill Pattern not supported : ' + infillpattern , title = catalog.i18nc("@info:title", "Post Processing")).show()
@@ -432,25 +431,21 @@ class GradientInfill(Script):
                 new_Line=""
                 stringFeed = ""
                 line_index = lines.index(currentLine)
-                
+
                 if is_begin_layer_line(currentLine):
                     perimeterSegments = []
-                    
+
                 if is_begin_inner_wall_line(currentLine):
                     currentSection = Section.INNER_WALL
                     # Logger.log('d', 'is_begin_inner_wall_line'  )
-
-                if is_begin_outer_wall_line(currentLine):
+                elif is_begin_outer_wall_line(currentLine):
                     currentSection = Section.OUTER_WALL
                     # Logger.log('d', 'is_begin_outer_wall_line' )
 
-                if currentSection == Section.INNER_WALL and test_outer_wall == False:
-                    if is_extrusion_line(currentLine):
-                        perimeterSegments.append(Segment(getXY(currentLine), lastPosition))
-
-                if currentSection == Section.OUTER_WALL and test_outer_wall == True:
-                    if is_extrusion_line(currentLine):
-                        perimeterSegments.append(Segment(getXY(currentLine), lastPosition))
+                if ((currentSection == Section.INNER_WALL and not test_outer_wall) or
+                    (currentSection == Section.OUTER_WALL and test_outer_wall)) and \
+                   is_extrusion_line(currentLine):
+                    perimeterSegments.append(Segment(getXY(currentLine), lastPosition))
 
                 if is_begin_infill_segment_line(currentLine):
                     # Log Size of perimeterSegments for debuging
@@ -462,7 +457,7 @@ class GradientInfill(Script):
                 if currentSection == Section.INFILL:
                     if "F" in currentLine and "G1" in currentLine:
                         searchSpeed = re.search(r"F(\d*\.?\d*)", currentLine)
-                        
+
                         if searchSpeed:
                             current_feed=float(searchSpeed.group(1))
                             new_Line="G1 F{}\n".format(current_feed)
@@ -472,9 +467,8 @@ class GradientInfill(Script):
                     if "E" in currentLine and "G1" in currentLine and "X" in currentLine and "Y" in currentLine:
                         currentPosition = getXY(currentLine)
                         splitLine = currentLine.split(" ")
-                        
-                        # if infill_type == Infill.LINEAR:  
-                        if infill_type == 2:
+
+                        if infill_type == Infill.LINEAR:
                             # find extrusion length
                             for element in splitLine:
                                 if "E" in element:
@@ -484,7 +478,7 @@ class GradientInfill(Script):
                             segmentSteps = segmentLength / gradientDiscretizationLength
                             extrusionLengthPerSegment = extrusionLength / segmentSteps
                             segmentDirection = Point2D((currentPosition.x - lastPosition.x) / segmentLength * gradientDiscretizationLength,(currentPosition.y - lastPosition.y) / segmentLength * gradientDiscretizationLength)
- 
+
                             if segmentSteps >= 2:
                                 # new_Line=new_Line+"; GradientInfill segmentSteps >= 2\n"
                                 for step in range(int(segmentSteps)):
@@ -493,7 +487,7 @@ class GradientInfill(Script):
                                     if shortestDistance < gradient_thickness:
                                         segmentExtrusion = extrusionLengthPerSegment * mapRange((0, gradient_thickness), (max_flow / 100, min_flow / 100), shortestDistance)
                                         segmentFeed = current_feed / mapRange((0, gradient_thickness), (max_flow / 100, min_flow / 100), shortestDistance)
-    
+
                                         if gradual_speed:
                                             if segmentFeed > (current_feed * max_over_speed_factor):
                                                 segmentFeed = current_feed * max_over_speed_factor
@@ -507,8 +501,7 @@ class GradientInfill(Script):
                                             segmentFeed = current_feed / (min_flow / 100)
                                         else:
                                             segmentFeed = current_feed * max_over_speed_factor
-                                            
-                                            
+
                                         if gradual_speed:
                                             if segmentFeed > (current_feed * max_over_speed_factor):
                                                 segmentFeed = current_feed * max_over_speed_factor
@@ -526,15 +519,15 @@ class GradientInfill(Script):
                                     segmentFeed = current_feed * min_over_speed_factor
                                 if gradual_speed:
                                     stringFeed = " F{}".format(int(segmentFeed))
-                    
+
                                 new_Line=new_Line+get_extrusion_command(currentPosition.x,currentPosition.y,segmentLengthRatio * extrusionLength * max_flow / 100) + stringFeed # + " ; Last line"
-                                
+
                                 lines[line_index] = new_Line
-                                
+
                             else :
                                 outPutLine = ""
                                 # outPutLine = "; GradientInfill segmentSteps < 2\n"
-                               
+
                                 for element in splitLine:
                                     if "E" in element:
                                         outPutLine = outPutLine + "E" + str(round(extrusionLength * link_flow / 100, 5))
@@ -542,12 +535,11 @@ class GradientInfill(Script):
                                         outPutLine = outPutLine + element + " "
                                 outPutLine = outPutLine # + "\n"
                                 lines[line_index] = outPutLine
-                                
+
                             # writtenToFile = 1
-                            
+
                         # gyroid or honeycomb
-                        # if infill_type == Infill.SMALL_SEGMENTS:
-                        if infill_type == 1:
+                        if infill_type == Infill.SMALL_SEGMENTS:
                             shortestDistance = min_distance_from_segment(Segment(lastPosition, currentPosition), perimeterSegments)
 
                             outPutLine = new_Line
